@@ -36,7 +36,6 @@ void function1(vector<int>& a) {
 
     #pragma omp parallel
     {
-        #pragma omp single
         quicksort_task(a, 0, a.size() - 1);
     }
 }
