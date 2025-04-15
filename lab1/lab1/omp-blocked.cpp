@@ -1,6 +1,7 @@
 // Header inclusions, if any...
 
 #include "lib/gemm.h"
+#include <cstring>
 
 // Using declarations, if any...
 
