@@ -506,7 +506,7 @@ local.properties
 *.slo
 *.lo
 *.o
-*.a
+# *.a
 *.la
 *.lai
 *.so
@@ -974,7 +974,7 @@ _deps
 # Compiled Static libraries
 *.lai
 *.la
-*.a
+# *.a
 *.lib
 
 # Executables
@@ -1006,7 +1006,7 @@ _deps
 
 # Libraries
 *.lib
-*.a
+# *.a
 *.la
 *.lo
 
