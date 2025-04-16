@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
 
   if (parallel_blocked) {
     clog << "\nRun blocked parallel GEMM with OpenMP\n";
-    Benchmark(&GemmParallelBlocked, a, b, c);
+    BenchmarkCustom(&GemmParallelBlocked, a, b, c);
     if (Diff(c_base, c) != 0) {
       fail = true;
     }

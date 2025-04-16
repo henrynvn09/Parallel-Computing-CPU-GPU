@@ -6,7 +6,8 @@
 // Using declarations, if any...
 
 void GemmParallelBlocked(const float a[kI][kK], const float b[kK][kJ],
-                         float c[kI][kJ]) {
+                         float c[kI][kJ], int blockSizeI,
+                         int blockSizeK, int blockSizeJ) {
   //TODO: Your code goes here...
 
   #pragma omp parallel for
@@ -14,9 +15,6 @@ void GemmParallelBlocked(const float a[kI][kK], const float b[kK][kJ],
     std::memset(c[i], 0, sizeof(float) * kJ);
   }
 
-  int blockSizeI = 64;
-  int blockSizeK = 64;
-  int blockSizeJ = 64;
   int i, k, j, bi, bk, bj;  
 
   #pragma omp parallel for shared(a, b, c) private(i, k, j, bi, bk, bj)

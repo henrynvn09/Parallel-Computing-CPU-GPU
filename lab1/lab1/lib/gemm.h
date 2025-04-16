@@ -15,11 +15,15 @@ void GemmSequential(const float a[kI][kK], const float b[kK][kJ],
 void GemmParallel(const float a[kI][kK], const float b[kK][kJ],
                   float c[kI][kJ]);
 void GemmParallelBlocked(const float a[kI][kK], const float b[kK][kJ],
-                         float c[kI][kJ]);
+                         float c[kI][kJ],int blockSizeI,
+                         int blockSizeK, int blockSizeJ);
 void Benchmark(
     void (*gemm)(const float[kI][kK], const float[kK][kJ], float[kI][kJ]),
     const float a[kI][kK], const float b[kK][kJ], float c[kI][kJ]);
-
+void BenchmarkCustom(
+    void (*gemm)(const float[kI][kK], const float[kK][kJ], float[kI][kJ],int, int, int),
+    const float a[kI][kK], const float b[kK][kJ], float c[kI][kJ]);
+    
 void Init(float a[kI][kK], float[kK][kJ]);
 int Diff(const float c1[kI][kJ], const float c2[kI][kJ]);
 #endif

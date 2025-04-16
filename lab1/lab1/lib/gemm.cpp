@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "gemm.h"
+#include <algorithm>
 
 using std::chrono::duration_cast;
 using std::chrono::microseconds;
@@ -99,3 +100,53 @@ void Benchmark(
   clog << "Time: " << run_time_us * 1e-6 << " s\n";
   clog << "Perf: " << gflops << " GFlops\n";
 }
+
+
+struct BlockResult {
+  int bi;
+  int bk;
+  int bj;
+  float gflops;
+  uint64_t run_time_us;
+};
+
+
+inline bool CompareBlockResult(const BlockResult &a, const BlockResult &b) {
+  return a.gflops > b.gflops;
+}
+void BenchmarkCustom(
+  void (*gemm)(const float[kI][kK], const float[kK][kJ], float[kI][kJ],
+               int, int, int),
+  const float a[kI][kK], const float b[kK][kJ], float c[kI][kJ]) {
+
+    std::vector<BlockResult> results;
+  
+    // Bruteforce over block sizes (I, J, K) in steps of 4 up to 1000.
+    for (int bi = 4; bi < 101; bi += 4) {
+      for (int bj = 4; bj < 101; bj += 4) {
+        for (int bk = 4; bk < 101; bk += 4) {
+          const auto begin = steady_clock::now();
+          (*gemm)(a, b, c, bi, bk, bj);
+          const auto end = steady_clock::now();
+          uint64_t run_time_us = duration_cast<microseconds>(end - begin).count();
+          // Total floating point operations: 2 * kI * kJ * kK
+          float gflops = 2.0 * kI * kJ * kK / (run_time_us * 1e3);
+          clog << "bI = " << bi << ", bK = " << bk << ", bJ = " << bj
+               << " => " << gflops << " GFlops, Time: "
+               << run_time_us * 1e-6 << " s\n";
+          results.push_back({bi, bk, bj, gflops, run_time_us});
+        }
+      }
+    }
+    // Sort results in descending order of GFLOPS.
+    std::sort(results.begin(), results.end(), CompareBlockResult);
+      
+    int topN = std::min(10, static_cast<int>(results.size()));
+    for (int i = 0; i < topN; ++i) {
+      clog << "Rank " << i + 1 << ": Block sizes: I=" << results[i].bi 
+           << ", K=" << results[i].bk 
+           << ", J=" << results[i].bj 
+           << " => " << results[i].gflops << " GFlops, Time: " 
+           << results[i].run_time_us * 1e-6 << " s\n";
+    }
+  }
