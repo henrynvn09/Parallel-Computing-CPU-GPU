@@ -1,27 +1,108 @@
-TILE_I: 32, TILE_J: 512, TILE_K: 8 Perf: 91.9287 GFlops
-TILE_I: 64, TILE_J: 64, TILE_K: 8 Perf: 91.0595 GFlops
-TILE_I: 64, TILE_J: 64, TILE_K: 16 Perf: 91.7318 GFlops
-TILE_I: 64, TILE_J: 128, TILE_K: 32 Perf: 93.0434 GFlops
-TILE_I: 64, TILE_J: 256, TILE_K: 8 Perf: 93.9088 GFlops
-TILE_I: 64, TILE_J: 256, TILE_K: 16 Perf: 94.1358 GFlops
-TILE_I: 64, TILE_J: 512, TILE_K: 8 Perf: 97.5406 GFlops
-TILE_I: 64, TILE_J: 512, TILE_K: 16 Perf: 93.3734 GFlops
-TILE_I: 128, TILE_J: 64, TILE_K: 8 Perf: 92.9146 GFlops
-TILE_I: 128, TILE_J: 128, TILE_K: 8 Perf: 91.3319 GFlops
-TILE_I: 128, TILE_J: 256, TILE_K: 8 Perf: 96.0742 GFlops
-TILE_I: 128, TILE_J: 256, TILE_K: 16 Perf: 97.7935 GFlops
-TILE_I: 128, TILE_J: 512, TILE_K: 8 Perf: 100.288 GFlops
-TILE_I: 128, TILE_J: 512, TILE_K: 16 Perf: 96.3953 GFlops
-TILE_I: 128, TILE_J: 1024, TILE_K: 8 Perf: 90.0284 GFlops
-TILE_I: 256, TILE_J: 256, TILE_K: 8 Perf: 98.0718 GFlops
-TILE_I: 256, TILE_J: 256, TILE_K: 16 Perf: 99.7491 GFlops
-TILE_I: 256, TILE_J: 512, TILE_K: 8 Perf: 101.195 GFlops
-TILE_I: 256, TILE_J: 512, TILE_K: 16 Perf: 96.7278 GFlops
-TILE_I: 256, TILE_J: 1024, TILE_K: 8 Perf: 90.1664 GFlops
-TILE_I: 512, TILE_J: 512, TILE_K: 8 Perf: 100.561 GFlops
-TILE_I: 512, TILE_J: 512, TILE_K: 16 Perf: 95.5969 GFlops
-TILE_I: 512, TILE_J: 1024, TILE_K: 1024
-TILE_I: 1024, TILE_J: 512, TILE_K: 1024
-TILE_I: 1024, TILE_J: 1024, TILE_K: 8 Perf: 90.9953 GFlops
-TILE_I: 1024, TILE_J: 1024, TILE_K: 512
-TILE_I: 1024, TILE_J: 1024, TILE_K: 1024
+TILE_I: 8, TILE_J: 8, TILE_K: 8
+Problem size: 4096 x 4096 x 4096
+
+Perf: 14.9867 GFlops
+TILE_I: 8, TILE_J: 8, TILE_K: 256
+Problem size: 4096 x 4096 x 4096
+
+Perf: 5.57337 GFlops
+TILE_I: 8, TILE_J: 8, TILE_K: 512
+Problem size: 4096 x 4096 x 4096
+
+Perf: 19.6211 GFlops
+TILE_I: 8, TILE_J: 256, TILE_K: 8
+Problem size: 4096 x 4096 x 4096
+
+Perf: 60.5282 GFlops
+TILE_I: 8, TILE_J: 256, TILE_K: 256
+Problem size: 4096 x 4096 x 4096
+
+Perf: 31.1664 GFlops
+TILE_I: 8, TILE_J: 256, TILE_K: 512
+Problem size: 4096 x 4096 x 4096
+
+Perf: 30.1035 GFlops
+TILE_I: 8, TILE_J: 512, TILE_K: 8
+Problem size: 4096 x 4096 x 4096
+
+Perf: 75.198 GFlops
+TILE_I: 8, TILE_J: 512, TILE_K: 256
+Problem size: 4096 x 4096 x 4096
+
+Perf: 35.3568 GFlops
+TILE_I: 8, TILE_J: 512, TILE_K: 512
+Problem size: 4096 x 4096 x 4096
+
+Perf: 32.0135 GFlops
+TILE_I: 256, TILE_J: 8, TILE_K: 8
+Problem size: 4096 x 4096 x 4096
+
+Perf: 74.4493 GFlops
+TILE_I: 256, TILE_J: 8, TILE_K: 256
+Problem size: 4096 x 4096 x 4096
+
+Perf: 38.8462 GFlops
+TILE_I: 256, TILE_J: 8, TILE_K: 512
+Problem size: 4096 x 4096 x 4096
+
+Perf: 35.5796 GFlops
+TILE_I: 256, TILE_J: 256, TILE_K: 8
+Problem size: 4096 x 4096 x 4096
+
+Perf: 166.465 GFlops
+TILE_I: 256, TILE_J: 256, TILE_K: 256
+Problem size: 4096 x 4096 x 4096
+
+Perf: 50.464 GFlops
+TILE_I: 256, TILE_J: 256, TILE_K: 512
+Problem size: 4096 x 4096 x 4096
+
+Perf: 48.8386 GFlops
+TILE_I: 256, TILE_J: 512, TILE_K: 8
+Problem size: 4096 x 4096 x 4096
+
+Perf: 169.802 GFlops
+TILE_I: 256, TILE_J: 512, TILE_K: 256
+Problem size: 4096 x 4096 x 4096
+
+Perf: 51.373 GFlops
+TILE_I: 256, TILE_J: 512, TILE_K: 512
+Problem size: 4096 x 4096 x 4096
+
+Perf: 40.1077 GFlops
+TILE_I: 512, TILE_J: 8, TILE_K: 8
+Problem size: 4096 x 4096 x 4096
+
+Perf: 66.0539 GFlops
+TILE_I: 512, TILE_J: 8, TILE_K: 256
+Problem size: 4096 x 4096 x 4096
+
+Perf: 36.8266 GFlops
+TILE_I: 512, TILE_J: 8, TILE_K: 512
+Problem size: 4096 x 4096 x 4096
+
+Perf: 34.4138 GFlops
+TILE_I: 512, TILE_J: 256, TILE_K: 8
+Problem size: 4096 x 4096 x 4096
+
+Perf: 168.748 GFlops
+TILE_I: 512, TILE_J: 256, TILE_K: 256
+Problem size: 4096 x 4096 x 4096
+
+Perf: 51.0466 GFlops
+TILE_I: 512, TILE_J: 256, TILE_K: 512
+Problem size: 4096 x 4096 x 4096
+
+Perf: 49.3283 GFlops
+TILE_I: 512, TILE_J: 512, TILE_K: 8
+Problem size: 4096 x 4096 x 4096
+
+Perf: 170.897 GFlops
+TILE_I: 512, TILE_J: 512, TILE_K: 256
+Problem size: 4096 x 4096 x 4096
+
+Perf: 51.2941 GFlops
+TILE_I: 512, TILE_J: 512, TILE_K: 512
+Problem size: 4096 x 4096 x 4096
+
+Perf: 41.9367 GFlops
