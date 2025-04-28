@@ -106,6 +106,17 @@
     "typeinfo": "cpp",
     "unordered_map": "cpp",
     "variant": "cpp",
-    "vector": "cpp"
+    "vector": "cpp",
+    "complex": "cpp",
+    "memory": "cpp",
+    "fstream": "cpp",
+    "iomanip": "cpp",
+    "algorithm": "cpp"
+  },
+  "github.copilot.enable": {
+    "*": true,
+    "plaintext": false,
+    "markdown": false,
+    "scminput": false
   }
 }
