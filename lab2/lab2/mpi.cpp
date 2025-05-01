@@ -8,6 +8,8 @@
 #define TILE_K 8
 #define ALIGNED 256
 
+using namespace std;
+
 void computeLocalTiledGEMM(float (*a)[kK], float (*c)[kJ], const float (*b)[kJ], int rows)
 {
     float tileA[TILE_I][TILE_K], tileB[TILE_K][TILE_J];
@@ -65,16 +67,9 @@ void computeLocalTiledGEMM(float (*a)[kK], float (*c)[kJ], const float (*b)[kJ],
 
             for (i = 0; i < TILE_I; ++i)
             {
-                for (j = 0; j < TILE_J; j += 8)
+                for (j = 0; j < min(TILE_J, kJ-jb); j++)
                 {
-                    c[ib + i][jb + j] += tileC[i][j];
-                    c[ib + i][jb + j + 1] += tileC[i][j + 1];
-                    c[ib + i][jb + j + 2] += tileC[i][j + 2];
-                    c[ib + i][jb + j + 3] += tileC[i][j + 3];
-                    c[ib + i][jb + j + 4] += tileC[i][j + 4];
-                    c[ib + i][jb + j + 5] += tileC[i][j + 5];
-                    c[ib + i][jb + j + 6] += tileC[i][j + 6];
-                    c[ib + i][jb + j + 7] += tileC[i][j + 7];
+                    c[ib + i][jb + j] = tileC[i][j];
                 }
             }
         }
