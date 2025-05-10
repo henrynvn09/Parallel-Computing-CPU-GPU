@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "/Users/henry/Code/cs133-paralle/lab2/lab2/lib",
+      "program": "/Users/henry/Code/cs133-paralle/lab2/lab2/lib/build/Debug/outDebug"
+    }
+  ]
+}
