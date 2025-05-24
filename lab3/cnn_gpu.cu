@@ -3,50 +3,75 @@
 #include "cnn_gpu.cuh"
 
 // Using declarations, if any...
+#define TILE_WIDTH 16
+
+#define TILE_WIDTH_CONV (TILE_WIDTH * 2)
+#define SMEM_TILE (TILE_WIDTH_CONV + kKernel - 1)
+
 __global__ void cnn_gpu(float *input, float *weight, float *bias, float *output) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int h = blockIdx.y * blockDim.y + threadIdx.y;
-    int w = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (i < kNum && h < kImSize && w < kImSize) {
-        // Initialize output with bias
-        float reg = bias[i];
+    int bx = blockIdx.x, by = blockIdx.y;
+    int tx = threadIdx.x, ty = threadIdx.y;
 
-        // Convolution operation
-        for (int j = 0; j < kNum; ++j) {
-            for (int p = 0; p < kKernel; ++p) {
-                for (int q = 0; q < kKernel; ++q) {
-                    int w_idx = i * kNum * kKernel * kKernel + j * kKernel * kKernel + p * kKernel + q;
-                    int h_idx = j * kImSize * kImSize + (h + p) * kImSize + (w + q);
-                    reg += weight[w_idx] * input[h_idx];
-                }
+    int channel = blockIdx.z;
+
+    int row = by * TILE_WIDTH + ty;
+    int col = bx * TILE_WIDTH + tx;
+
+    __shared__ float subTileInput[SMEM_TILE][SMEM_TILE];
+
+    float pool[2][2] = {{0.0f, 0.0f}, {0.0f, 0.0f}};
+
+    // by_input and bx_input are the starting indices of the input tile
+    int by_input = by * TILE_WIDTH_CONV;
+    int bx_input = bx * TILE_WIDTH_CONV;
+
+    for (int c = 0; c < kNum; c += 1) {
+        // Load input and weight into shared memory
+        for (int i = ty * TILE_WIDTH + tx; i < SMEM_TILE * SMEM_TILE; i += TILE_WIDTH * TILE_WIDTH) {
+            int x_shared = i / (SMEM_TILE * SMEM_TILE); 
+            int y_shared = i % (SMEM_TILE * SMEM_TILE) / SMEM_TILE;
+            int w_shared = i % (SMEM_TILE * SMEM_TILE) % SMEM_TILE;
+                    
+            int input_c = c + x_shared;
+            int input_y = by_input + y_shared;
+            int input_x = bx_input + w_shared;
+            
+            if (input_c < kNum && input_y < kInImSize && input_x < kInImSize) {
+                subTileInput[y_shared][w_shared] = input(input_c, input_y, input_x);
+            } else {
+                subTileInput[y_shared][w_shared] = 0.0f;
             }
         }
 
-        // ReLU activation
-        reg = fmaxf(0.f, reg);
+        __syncthreads();
 
-        __threadfence();
+        // convolution layer
+            for (int poolRow = 0; poolRow < 2; ++poolRow) {
+                for (int poolCol = 0; poolCol < 2; ++poolCol) {
+                    float conv_sum = 0.0f;
 
-        if (h % 2 == 0 && w % 2 == 0 && h/2 < kOutImSize && w/2 < kOutImSize) {
-            // Compute output index
-            int out_h = h/2;
-            int out_w = w/2;
-            int out_idx = i*(kOutImSize*kOutImSize) + out_h*kOutImSize + out_w;
-            
-            // Get indices for the 2x2 block
-            int c_idx_00 = i*(kImSize*kImSize) + h*kImSize + w;
-            int c_idx_01 = i*(kImSize*kImSize) + h*kImSize + (w+1);
-            int c_idx_10 = i*(kImSize*kImSize) + (h+1)*kImSize + w;
-            int c_idx_11 = i*(kImSize*kImSize) + (h+1)*kImSize + (w+1);
-            
-            // Compute max
-            output[out_idx] = max(
-                max(sum, input[c_idx_01]),
-                max(input[c_idx_10], input[c_idx_11])
-            );
-        }
+                    for (int krow = 0; krow < kKernel; ++krow) {
+                        for (int kcol = 0; kcol < kKernel; ++kcol) {
+                            int input_y = ty * 2 + poolRow + krow;
+                            int input_x = tx * 2 + poolCol + kcol;
+                            float inputVal = subTileInput[input_y][input_x];
+                            conv_sum += inputVal * weight(channel, c, krow, kcol);
+                        }
+                    }
+                    pool[poolRow][poolCol] += conv_sum;
+                }
+            }
+        
+        __syncthreads();
     }
 
+    float max_val = INT_MIN;
+    for (int poolRow = 0; poolRow < 2; ++poolRow) {
+        for (int poolCol = 0; poolCol < 2; ++poolCol) {
+            float relu_val = fmaxf(pool[poolRow][poolCol] + bias[channel], 0.0f);
+            max_val = fmaxf(max_val, relu_val);
+        }
+    }
+    output(channel, row, col) = max_val;
 }
-
