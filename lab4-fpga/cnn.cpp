@@ -2,7 +2,6 @@
 #include <cstring>
 #include <hls_stream.h>
 #include <hls_vector.h>
-#include <algorithm> // For std::min
 
 /******************************************************************************************
 These typedefs define *fixed-size vector types* for float values using HLS
@@ -27,123 +26,186 @@ typedef hls::vector<float, 2>
 typedef hls::vector<float, 1>
     float1; // A "vector" of 1 float (just a wrapper — used for consistency)
 
-// --- Define Tile Sizes ---
-const int KERNEL_DIM = 5;
-const int OUTPUT_H = 224;
-const int OUTPUT_W = 224;
-const int INPUT_H_FULL = 228; // Full input height for one channel
-const int INPUT_W_FULL = 228; // Full input width for one channel
-
-const int TILE_H_OUT = 56; // Tile height for output
-const int TILE_W_OUT = 56; // Tile width for output
-const int TILE_H_IN = TILE_H_OUT + KERNEL_DIM - 1; // Tile height for input (56+5-1 = 60)
-const int TILE_W_IN = TILE_W_OUT + KERNEL_DIM - 1; // Tile width for input (56+5-1 = 60)
-
-
 /**
  * @brief Loads a 3D input tile from external memory (vinput) into a local array
- * (input_buffer).
+ * (input).
  *
  * This function uses vectorized memory access (float4) to efficiently load data
  * from memory. Each float4 contains 4 float elements, allowing 128-bit wide
  * memory reads. The inner loop is pipelined to achieve high throughput (one
  * access per cycle).
  *
- * @param input_buffer  Local buffer to store the unpacked input tile [1][228][228].
- * @param vinput        Flattened input buffer in memory, accessed with float4
+ * @param input   Local buffer to store the unpacked input tile [1][228][228].
+ * @param vinput  Flattened input buffer in memory, accessed with float4
  * vectors.
- * @param d0            Depth offset (batch or input channel index).
+ * @param d0      Depth offset (batch or input channel index).
  */
-void load_input_S0(float input_buffer[1][INPUT_H_FULL][INPUT_W_FULL], float4 vinput[3326976], int d0) {
+void load_input_S0(float input[1][228][228], float4 vinput[3326976], int d0) {
+
+  /**
+   * Prevents function inlining to give HLS better control over scheduling.
+   * This is useful when the function is large or reused multiple times.
+   */
 #pragma HLS inline off
-    for (int i0 = 0; i0 < 1; i0 += 1) {
-        for (int i1 = 0; i1 < INPUT_H_FULL; i1 += 1) {
-            for (int i2 = 0; i2 < INPUT_W_FULL; i2 += 4) {
+
+  /**
+   * Iterate over the input dimensions.
+   * - i0: input depth (fixed to 1 here)
+   * - i1: height dimension
+   * - i2: width dimension, step by 4 (because we read float4)
+   */
+  for (int i0 = 0; i0 < 1; i0 += 1) {
+    for (int i1 = 0; i1 < 228; i1 += 1) {
+      for (int i2 = 0; i2 < 228; i2 += 4) {
+
+        /**
+         * Pipeline the innermost loop with an initiation interval (II) of 1.
+         * This enables the function to read one float4 per clock cycle.
+         */
 #pragma HLS pipeline II = 1
-                float4 tmp_input = vinput[(i0 + d0 * 1) * 12996 + i1 * 57 + i2 / 4]; // 12996 = 228*228/4, 57 = 228/4
-                input_buffer[i0][i1][i2 + 0] = tmp_input[0];
-                input_buffer[i0][i1][i2 + 1] = tmp_input[1];
-                input_buffer[i0][i1][i2 + 2] = tmp_input[2];
-                input_buffer[i0][i1][i2 + 3] = tmp_input[3];
-            }
-        }
+
+        /**
+         * Load a float4 (4 floats) from external memory using a flattened
+         * index. The index computation maps the 3D access to 1D array space.
+         */
+        float4 tmp_input = vinput[(i0 + d0 * 1) * 12996 + i1 * 57 + i2 / 4];
+
+        /**
+         * Unpack the float4 into individual scalar floats and store in the
+         * local buffer. This makes the data ready for downstream computation.
+         */
+        input[i0][i1][i2 + 0] = tmp_input[0];
+        input[i0][i1][i2 + 1] = tmp_input[1];
+        input[i0][i1][i2 + 2] = tmp_input[2];
+        input[i0][i1][i2 + 3] = tmp_input[3];
+      }
     }
+  }
 }
 
 /**
  * @brief Loads a 3D output tile from external memory (voutput) into a local
- * array (output_buffer).
+ * array (output).
  *
  * This function reads output feature maps from a memory buffer using vectorized
  * float16 types, which enables 512-bit wide memory access (16 floats per
  * transaction). The output is unpacked and stored into a local array for
- * further processing or accumulation.
+ * further processing.
  *
- * @param output_buffer Local output buffer to populate [16][224][224].
- * @param voutput       Flattened vectorized output buffer in memory, accessed using
+ * @param output   Local output buffer to populate [16][224][224].
+ * @param voutput  Flattened vectorized output buffer in memory, accessed using
  * float16.
- * @param d0            Depth tile index (e.g., batch index or output channel
+ * @param d0       Depth tile index (e.g., batch index or output channel
  * offset).
  */
-void load_output_S0(float output_buffer[16][OUTPUT_H][OUTPUT_W], float16 voutput[802816],
+void load_output_S0(float output[16][224][224], float16 voutput[802816],
                     int d0) {
+
 #pragma HLS inline off
-    for (int i0 = 0; i0 < 16; i0 += 1) {
-        for (int i1 = 0; i1 < OUTPUT_H; i1 += 1) {
-            for (int i2 = 0; i2 < OUTPUT_W; i2 += 16) {
+
+  /**
+   * Iterate over the output tensor dimensions.
+   * - i0: output channels (16 per tile)
+   * - i1: output height (224)
+   * - i2: output width (224), processed in blocks of 16 (float16)
+   */
+  for (int i0 = 0; i0 < 16; i0 += 1) {
+    for (int i1 = 0; i1 < 224; i1 += 1) {
+      for (int i2 = 0; i2 < 224; i2 += 16) {
+
+        /**
+         * Pipeline the innermost loop with II=1.
+         * This allows one float16 to be read per cycle, maximizing throughput.
+         */
 #pragma HLS pipeline II = 1
-                float16 tmp_output = voutput[(i0 + d0 * 16) * 3136 + i1 * 14 + i2 / 16]; // 3136 = 224*224/16, 14 = 224/16
-                output_buffer[i0][i1][i2 + 0] = tmp_output[0];
-                output_buffer[i0][i1][i2 + 1] = tmp_output[1];
-                output_buffer[i0][i1][i2 + 2] = tmp_output[2];
-                output_buffer[i0][i1][i2 + 3] = tmp_output[3];
-                output_buffer[i0][i1][i2 + 4] = tmp_output[4];
-                output_buffer[i0][i1][i2 + 5] = tmp_output[5];
-                output_buffer[i0][i1][i2 + 6] = tmp_output[6];
-                output_buffer[i0][i1][i2 + 7] = tmp_output[7];
-                output_buffer[i0][i1][i2 + 8] = tmp_output[8];
-                output_buffer[i0][i1][i2 + 9] = tmp_output[9];
-                output_buffer[i0][i1][i2 + 10] = tmp_output[10];
-                output_buffer[i0][i1][i2 + 11] = tmp_output[11];
-                output_buffer[i0][i1][i2 + 12] = tmp_output[12];
-                output_buffer[i0][i1][i2 + 13] = tmp_output[13];
-                output_buffer[i0][i1][i2 + 14] = tmp_output[14];
-                output_buffer[i0][i1][i2 + 15] = tmp_output[15];
-            }
-        }
+
+        /**
+         * Load a vector of 16 floats from the external memory.
+         * The index flattens the 3D coordinates into a 1D memory address.
+         */
+        float16 tmp_output = voutput[(i0 + d0 * 16) * 3136 + i1 * 14 + i2 / 16];
+
+        /**
+         * Unpack each float from the vector and assign it to the local 3D
+         * output buffer. This prepares the output tile for any further
+         * processing or accumulation.
+         */
+        output[i0][i1][i2 + 0] = tmp_output[0];
+        output[i0][i1][i2 + 1] = tmp_output[1];
+        output[i0][i1][i2 + 2] = tmp_output[2];
+        output[i0][i1][i2 + 3] = tmp_output[3];
+        output[i0][i1][i2 + 4] = tmp_output[4];
+        output[i0][i1][i2 + 5] = tmp_output[5];
+        output[i0][i1][i2 + 6] = tmp_output[6];
+        output[i0][i1][i2 + 7] = tmp_output[7];
+        output[i0][i1][i2 + 8] = tmp_output[8];
+        output[i0][i1][i2 + 9] = tmp_output[9];
+        output[i0][i1][i2 + 10] = tmp_output[10];
+        output[i0][i1][i2 + 11] = tmp_output[11];
+        output[i0][i1][i2 + 12] = tmp_output[12];
+        output[i0][i1][i2 + 13] = tmp_output[13];
+        output[i0][i1][i2 + 14] = tmp_output[14];
+        output[i0][i1][i2 + 15] = tmp_output[15];
+      }
     }
+  }
 }
 
 /**
  * @brief Loads a 4D weight tensor from external memory (vweight) into a local
- * array (weight_buffer).
+ * array (weight).
  *
  * Each element is loaded using a float1 vector (i.e., scalar float wrapped for
  * interface consistency). The nested loops traverse the 4D weight structure
- * [16][256][5][5], reading one scalar at a time. This function can be a
- * bottleneck due to scalar reads.
+ * [16][256][5][5], reading one scalar at a time.
  *
- * @param weight_buffer  Local buffer to store the unpacked weights [16][256][5][5].
- * @param vweight        Flattened external buffer containing weights, accessed as
+ * @param weight   Local buffer to store the unpacked weights [16][256][5][5].
+ * @param vweight  Flattened external buffer containing weights, accessed as
  * float1 (1 float per entry).
- * @param d0_tile_offset Tile index for the outer output channel dimension (e.g., for
- * batching or tiling). This corresponds to the i0 loop in the cnn function.
+ * @param d0       Tile index for the outer output channel dimension (e.g., for
+ * batching or tiling).
  */
-void load_weight_S0(float weight_buffer[16][256][KERNEL_DIM][KERNEL_DIM], float1 vweight[1638400],
-                    int d0_tile_offset) { 
+void load_weight_S0(float weight[16][256][5][5], float1 vweight[1638400],
+                    int d0) {
+
 #pragma HLS inline off
-    for (int i0_w = 0; i0_w < 16; i0_w += 1) {    
-        for (int i1_w = 0; i1_w < 256; i1_w += 1) { 
-            for (int i2_w = 0; i2_w < KERNEL_DIM; i2_w += 1) {  
-                for (int i3_w = 0; i3_w < KERNEL_DIM; i3_w += 1) { 
+
+  /**
+   * Loop over the full 4D weight tensor:
+   * - i0: output channels (tile of 16)
+   * - i1: input channels (256)
+   * - i2: kernel height (5)
+   * - i3: kernel width  (5)
+   *
+   */
+  for (int i0 = 0; i0 < 16; i0 += 1) {
+    for (int i1 = 0; i1 < 256; i1 += 1) {
+      for (int i2 = 0; i2 < 5; i2 += 1) {
+        for (int i3 = 0; i3 < 5; i3 += 1) {
+
+          /**
+           * Pipeline the innermost loop with an initiation interval of 1.
+           * Ensures one float1 is read per clock cycle, maximizing throughput.
+           */
 #pragma HLS pipeline II = 1
-                    float1 tmp_weight =
-                        vweight[(i0_w + d0_tile_offset * 16) * 6400 + i1_w * 25 + i2_w * 5 + i3_w]; // 6400 = 256*5*5, 25=5*5
-                    weight_buffer[i0_w][i1_w][i2_w][i3_w] = tmp_weight[0];
-                }
-            }
+
+          /**
+           * Read a single weight value from memory.
+           * The flattened index computes the 1D offset from the 4D tensor
+           * coordinates.
+           */
+          float1 tmp_weight =
+              vweight[(i0 + d0 * 16) * 6400 + i1 * 25 + i2 * 5 + i3];
+
+          /**
+           * Store the scalar value in the local 4D weight buffer.
+           * tmp_weight[0] is used since float1 is a vector of 1 float.
+           */
+          weight[i0][i1][i2][i3] = tmp_weight[0];
         }
+      }
     }
+  }
 }
 
 /**
@@ -154,194 +216,196 @@ void load_weight_S0(float weight_buffer[16][256][KERNEL_DIM][KERNEL_DIM], float1
  * It packs 16 scalar float values into a float16 vector and performs one wide
  * memory write (512 bits).
  *
- * @param output_buffer Local buffer containing the computed output [16][224][224].
- * @param voutput       Flattened vectorized output buffer in memory (to be written).
- * @param d0            Depth tile index (e.g., batch index or output channel
+ * @param output   Local buffer containing the computed output [16][224][224].
+ * @param voutput  Flattened vectorized output buffer in memory (to be written).
+ * @param d0       Depth tile index (e.g., batch index or output channel
  * offset).
  */
-void store_output_S0(float output_buffer[16][OUTPUT_H][OUTPUT_W], float16 voutput[802816],
+void store_output_S0(float output[16][224][224], float16 voutput[802816],
                      int d0) {
+
 #pragma HLS inline off
-    for (int i0 = 0; i0 < 16; i0 += 1) {
-        for (int i1 = 0; i1 < OUTPUT_H; i1 += 1) {
-            for (int i2 = 0; i2 < OUTPUT_W; i2 += 16) {
+
+  /**
+   * Iterate over the output tensor dimensions:
+   * - i0: output channels (tile of 16)
+   * - i1: output height
+   * - i2: output width, processed in chunks of 16 (since we write float16)
+   */
+  for (int i0 = 0; i0 < 16; i0 += 1) {
+    for (int i1 = 0; i1 < 224; i1 += 1) {
+      for (int i2 = 0; i2 < 224; i2 += 16) {
+
+        /**
+         * Pipeline the innermost loop with an initiation interval of 1.
+         * This enables one float16 write per clock cycle for high throughput.
+         */
 #pragma HLS pipeline II = 1
-                float16 tmp_output;
-                tmp_output[0] = output_buffer[i0][i1][i2 + 0];
-                tmp_output[1] = output_buffer[i0][i1][i2 + 1];
-                tmp_output[2] = output_buffer[i0][i1][i2 + 2];
-                tmp_output[3] = output_buffer[i0][i1][i2 + 3];
-                tmp_output[4] = output_buffer[i0][i1][i2 + 4];
-                tmp_output[5] = output_buffer[i0][i1][i2 + 5];
-                tmp_output[6] = output_buffer[i0][i1][i2 + 6];
-                tmp_output[7] = output_buffer[i0][i1][i2 + 7];
-                tmp_output[8] = output_buffer[i0][i1][i2 + 8];
-                tmp_output[9] = output_buffer[i0][i1][i2 + 9];
-                tmp_output[10] = output_buffer[i0][i1][i2 + 10];
-                tmp_output[11] = output_buffer[i0][i1][i2 + 11];
-                tmp_output[12] = output_buffer[i0][i1][i2 + 12];
-                tmp_output[13] = output_buffer[i0][i1][i2 + 13];
-                tmp_output[14] = output_buffer[i0][i1][i2 + 14];
-                tmp_output[15] = output_buffer[i0][i1][i2 + 15];
-                voutput[(i0 + d0 * 16) * 3136 + i1 * 14 + i2 / 16] = tmp_output;
-            }
-        }
+
+        /**
+         * Pack 16 scalar floats from the local buffer into a float16 vector.
+         * This prepares the data for a wide memory write (512 bits).
+         */
+        float16 tmp_output;
+        tmp_output[0] = output[i0][i1][i2 + 0];
+        tmp_output[1] = output[i0][i1][i2 + 1];
+        tmp_output[2] = output[i0][i1][i2 + 2];
+        tmp_output[3] = output[i0][i1][i2 + 3];
+        tmp_output[4] = output[i0][i1][i2 + 4];
+        tmp_output[5] = output[i0][i1][i2 + 5];
+        tmp_output[6] = output[i0][i1][i2 + 6];
+        tmp_output[7] = output[i0][i1][i2 + 7];
+        tmp_output[8] = output[i0][i1][i2 + 8];
+        tmp_output[9] = output[i0][i1][i2 + 9];
+        tmp_output[10] = output[i0][i1][i2 + 10];
+        tmp_output[11] = output[i0][i1][i2 + 11];
+        tmp_output[12] = output[i0][i1][i2 + 12];
+        tmp_output[13] = output[i0][i1][i2 + 13];
+        tmp_output[14] = output[i0][i1][i2 + 14];
+        tmp_output[15] = output[i0][i1][i2 + 15];
+
+        /**
+         * Write the packed float16 vector to memory.
+         * The memory index is flattened from the 3D output coordinates.
+         */
+        voutput[(i0 + d0 * 16) * 3136 + i1 * 14 + i2 / 16] = tmp_output;
+      }
     }
+  }
 }
 
 /**
- * @brief Top-level CNN function that performs a convolution operation with spatial tiling.
+ * @brief Top-level CNN function that performs a convolution operation.
+ *
+ * @param input   Local input image buffer [1][228][228].
+ * @param output  Local output feature map buffer [16][224][224].
+ * @param weight  Local weight (kernel) buffer [16][256][5][5].
+ * @param vinput  Vectorized input memory buffer used for burst transfers.
+ * @param vweight Vectorized weight memory buffer.
+ * @param voutput Vectorized output memory buffer.
+ * 
+ * TODO: You need to optimize this function for better performance.
  */
-void cnn(float input_buffer[1][INPUT_H_FULL][INPUT_W_FULL], 
-         float output_buffer[16][OUTPUT_H][OUTPUT_W],
-         float weight_buffer[16][256][KERNEL_DIM][KERNEL_DIM], 
-         float4 vinput[3326976],
-         float1 vweight[1638400], 
-         float16 voutput[802816]) {
+void cnn(float input[1][228][228], float output[16][224][224],
+         float weight[16][256][5][5], float4 vinput[3326976],
+         float1 vweight[1638400], float16 voutput[802816]) {
 
-    // Local tile buffers
-    // These are placed on-chip, ideally in BRAMs.
-    // Making them static might give HLS more placement options, but automatic storage is typical for tile buffers.
-    float input_tile[1][TILE_H_IN][TILE_W_IN];
-#pragma HLS ARRAY_PARTITION variable=input_tile complete dim=1
-#pragma HLS ARRAY_PARTITION variable=input_tile cyclic factor=12 dim=2 // Factor for TILE_H_IN=60 (60/5=12)
-#pragma HLS ARRAY_PARTITION variable=input_tile cyclic factor=12 dim=3 // Factor for TILE_W_IN=60
+  for (int i0 = 0; i0 < 16; i0++) {
 
-    float output_tile[16][TILE_H_OUT][TILE_W_OUT];
-#pragma HLS ARRAY_PARTITION variable=output_tile cyclic factor=8 dim=1 // Matches i1 unroll factor
-#pragma HLS ARRAY_PARTITION variable=output_tile cyclic factor=14 dim=2 // Factor for TILE_H_OUT=56 (56/4=14)
-#pragma HLS ARRAY_PARTITION variable=output_tile cyclic factor=14 dim=3 // Factor for TILE_W_OUT=56
+    /**
+     * Load the weights for the current output tile.
+     * This function reads a portion of the weight buffer and stores it in the
+     * local 'weight' array.
+     */
+    load_weight_S0(weight, vweight, i0);
 
+    /**
+     * Load the partial output tile from external memory into the local 'output'
+     * array. This is useful when the output is computed in tiles and
+     * accumulated over multiple iterations.
+     */
+    load_output_S0(output, voutput, i0);
+    for (int j = 0; j < 256; j++) {
+      // #pragma HLS unroll factor = 16
 
-    // i0 loop: Iterates over tiles of 16 output channels.
-    I0_LOOP: for (int i0 = 0; i0 < 16; i0++) { // Output channel tile index
-#pragma HLS LOOP_TRIPCOUNT min=16 max=16 avg=16
+      /**
+       * Load a section of the input corresponding to the current input channel.
+       * Data is loaded from the vectorized memory (vinput) using float4
+       * accesses.
+       */
+      load_input_S0(input, vinput, j);
 
-        load_weight_S0(weight_buffer, vweight, i0);
-        load_output_S0(output_buffer, voutput, i0); // Load initial values (e.g. bias) for the whole output channel group
+      for (int i1 = 0; i1 < 16; i1++) {
+        for (int h = 0; h < 16 * 14; h++) { // Note: 16*14 equals 224 (the height dimension)
+          for (int w = 0; w < 224; w++) {
+            #pragma HLS pipeline II = 16
+            
+            for (int p = 0; p < 5; p++) {
+              #pragma HLS unroll factor = 5
+              for (int q = 0; q < 5; q++) {
+                #pragma HLS unroll factor = 5
 
-        // Spatial Tiling Loops (Output Height and Width)
-        OH_TILE_LOOP: for (int oh = 0; oh < OUTPUT_H; oh += TILE_H_OUT) {
-#pragma HLS LOOP_TRIPCOUNT min=4 max=4 avg=4 // OUTPUT_H/TILE_H_OUT = 224/56 = 4
-            OW_TILE_LOOP: for (int ow = 0; ow < OUTPUT_W; ow += TILE_W_OUT) {
-#pragma HLS LOOP_TRIPCOUNT min=4 max=4 avg=4 // OUTPUT_W/TILE_W_OUT = 224/56 = 4
+                /**
+                 * Compute the effective output channel index.
+                 * i0 selects the outer tile and i1 selects the sub-channel
+                 * within the tile.
+                 */
+                int i = i0 * 16 + i1;
+                output[i1][h][w] +=
+                    weight[i1][j][p][q] * input[0][h + p][w + q];
+              }
+            }
+          }
+        }
+      }
+    }
 
-                // Initialize output_tile with values from output_buffer (e.g., bias) for the current spatial tile
-                INIT_OTILE_I1: for (int i1_idx = 0; i1_idx < 16; ++i1_idx) {
-                    INIT_OTILE_TH: for (int th = 0; th < TILE_H_OUT; ++th) {
-#pragma HLS LOOP_TRIPCOUNT min=TILE_H_OUT max=TILE_H_OUT avg=TILE_H_OUT
-                        INIT_OTILE_TW: for (int tw = 0; tw < TILE_W_OUT; ++tw) {
-#pragma HLS LOOP_TRIPCOUNT min=TILE_W_OUT max=TILE_W_OUT avg=TILE_W_OUT
-#pragma HLS PIPELINE II=1
-                            // int global_h = oh + th; // Not strictly needed if loops are perfect
-                            // int global_w = ow + tw;
-                            output_tile[i1_idx][th][tw] = output_buffer[i1_idx][oh + th][ow + tw];
-                        }
-                    }
-                }
-
-                // j loop: Iterates over input channels (0 to 255)
-                J_LOOP: for (int j = 0; j < 256; j++) {
-#pragma HLS LOOP_TRIPCOUNT min=256 max=256 avg=256
-                    load_input_S0(input_buffer, vinput, j); // Load one full input channel
-
-                    // Load current input channel data into the smaller input_tile
-                    LOAD_ITILE_IH: for (int ih = 0; ih < TILE_H_IN; ++ih) {
-#pragma HLS LOOP_TRIPCOUNT min=TILE_H_IN max=TILE_H_IN avg=TILE_H_IN
-                        LOAD_ITILE_IW: for (int iw = 0; iw < TILE_W_IN; ++iw) {
-#pragma HLS LOOP_TRIPCOUNT min=TILE_W_IN max=TILE_W_IN avg=TILE_W_IN
-#pragma HLS PIPELINE II=1
-                            // Input tile starts at the same global H,W corner as output tile for corresponding calculations
-                            // int global_ih = oh + ih;
-                            // int global_iw = ow + iw;
-                            // Ensure reading within bounds of input_buffer [1][228][228]
-                            if ((oh + ih < INPUT_H_FULL) && (ow + iw < INPUT_W_FULL)) {
-                                input_tile[0][ih][iw] = input_buffer[0][oh + ih][ow + iw];
-                            } else {
-                                input_tile[0][ih][iw] = 0.0f; // Padding for reads outside the valid input region
-                            }
-                        }
-                    }
-                    
-                    // Convolution computation for the current tile
-                    // i1 loop: Iterates over the 16 output channels within the current tile.
-                    I1_CONV_LOOP: for (int i1 = 0; i1 < 16; i1++) {
-#pragma HLS UNROLL factor=8 
-                        // h_local loop: Iterates over output height within the tile
-                        H_LOCAL_LOOP: for (int h_local = 0; h_local < TILE_H_OUT; h_local++) {
-#pragma HLS LOOP_TRIPCOUNT min=TILE_H_OUT max=TILE_H_OUT avg=TILE_H_OUT
-                            // w_local loop: Iterates over output width within the tile
-                            W_LOCAL_LOOP: for (int w_local = 0; w_local < TILE_W_OUT; w_local++) {
-#pragma HLS LOOP_TRIPCOUNT min=TILE_W_OUT max=TILE_W_OUT avg=TILE_W_OUT
-#pragma HLS PIPELINE II=1
-                                // p loop: Kernel height (0 to 4)
-                                P_CONV_LOOP: for (int p = 0; p < KERNEL_DIM; p++) {
-#pragma HLS UNROLL
-                                    // q loop: Kernel width (0 to 4)
-                                    Q_CONV_LOOP: for (int q = 0; q < KERNEL_DIM; q++) {
-#pragma HLS UNROLL
-                                        output_tile[i1][h_local][w_local] +=
-                                            weight_buffer[i1][j][p][q] * input_tile[0][h_local + p][w_local + q];
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } // End of j loop (input channels)
-
-                // Store the computed output_tile back to the larger output_buffer for this spatial tile
-                STORE_OTILE_I1: for (int i1_idx = 0; i1_idx < 16; ++i1_idx) {
-                    STORE_OTILE_TH: for (int th = 0; th < TILE_H_OUT; ++th) {
-#pragma HLS LOOP_TRIPCOUNT min=TILE_H_OUT max=TILE_H_OUT avg=TILE_H_OUT
-                        STORE_OTILE_TW: for (int tw = 0; tw < TILE_W_OUT; ++tw) {
-#pragma HLS LOOP_TRIPCOUNT min=TILE_W_OUT max=TILE_W_OUT avg=TILE_W_OUT
-#pragma HLS PIPELINE II=1
-                            // int global_h = oh + th;
-                            // int global_w = ow + tw;
-                            output_buffer[i1_idx][oh + th][ow + tw] = output_tile[i1_idx][th][tw];
-                        }
-                    }
-                }
-            } // End OW_TILE_LOOP
-        } // End OH_TILE_LOOP
-        store_output_S0(output_buffer, voutput, i0);
-    } // End of i0 loop (output channel tiles)
+    /**
+     * After processing all input channels for the current output tile,
+     * store the computed output tile back to external memory.
+     * Data is packed and written using float16 vectorized writes.
+     */
+    store_output_S0(output, voutput, i0);
+  }
 }
-
 
 /**
  * @brief Top-level HLS kernel for CNN execution.
+ *
+ * This function is synthesized as the hardware entry point.
+ * It connects memory-mapped AXI interfaces for input/output/weights
+ * and invokes the main CNN function on local buffers.
+ *
+ * It also applies HLS optimization directives like:
+ * - INTERFACE pragmas for AXI-MM ports and control signals.
+ * - ARRAY_PARTITION pragmas to enable parallel access to local buffers.
+ *
+ * @param vinput   External vectorized input buffer (float4 format).
+ * @param vweight  External vectorized weight buffer (float1 format).
+ * @param voutput  External vectorized output buffer (float16 format).
  */
 void kernel_cnn(float4 vinput[3326976], float1 vweight[1638400],
                 float16 voutput[802816]) {
 
-#pragma HLS INTERFACE m_axi port = vinput offset = slave bundle = kernel_input depth=3326976
-#pragma HLS INTERFACE m_axi port = voutput offset = slave bundle = kernel_output depth=802816
-#pragma HLS INTERFACE m_axi port = vweight offset = slave bundle = kernel_weight depth=1638400
+/**
+ * Define memory-mapped AXI4 interfaces for data transfer.
+ * These ports will be connected to external DRAM via DMA.
+ */
+#pragma HLS INTERFACE m_axi port = vinput offset = slave bundle = kernel_input
+#pragma HLS INTERFACE m_axi port = voutput offset = slave bundle = kernel_output
+#pragma HLS INTERFACE m_axi port = vweight offset = slave bundle = kernel_weight
 
-#pragma HLS INTERFACE s_axilite port=vinput bundle=control
-#pragma HLS INTERFACE s_axilite port=voutput bundle=control
-#pragma HLS INTERFACE s_axilite port=vweight bundle=control
-#pragma HLS INTERFACE s_axilite port=return bundle=control
+  /**
+   * Local buffers for input, weights, and output feature maps.
+   * These buffers are stored in on-chip BRAM/URAM for fast access.
+   */
+  float input[1][228][228];
+  float output[16][224][224];
+  float weight[16][256][5][5];
 
-    // Buffers passed to cnn function - these reside on-chip (BRAM/URAM)
-    static float input_buffer_kernel[1][INPUT_H_FULL][INPUT_W_FULL];   
-    static float output_buffer_kernel[16][OUTPUT_H][OUTPUT_W]; 
-    static float weight_buffer_kernel[16][256][KERNEL_DIM][KERNEL_DIM]; 
+/**
+ * Apply array partitioning to allow concurrent access to different array
+ * dimensions. This improves parallelism and enables efficient pipelining of
+ * inner loops.
+ * TODO: You need to adjust the partitioning factors based on your design
+ */
+#pragma HLS ARRAY_PARTITION variable = input complete dim = 1
+#pragma HLS ARRAY_PARTITION variable = input cyclic factor = 1 dim = 2
+#pragma HLS ARRAY_PARTITION variable = input cyclic factor = 16 dim = 3
 
-    // Apply array partitioning as in the original code
-#pragma HLS ARRAY_PARTITION variable = input_buffer_kernel complete dim = 1
-#pragma HLS ARRAY_PARTITION variable = input_buffer_kernel cyclic factor = 16 dim = 2
-#pragma HLS ARRAY_PARTITION variable = input_buffer_kernel cyclic factor = 16 dim = 3
+#pragma HLS ARRAY_PARTITION variable = output cyclic factor = 1 dim = 1
+#pragma HLS ARRAY_PARTITION variable = output cyclic factor = 1 dim = 2
+#pragma HLS ARRAY_PARTITION variable = output cyclic complete dim = 3
 
-#pragma HLS ARRAY_PARTITION variable = output_buffer_kernel cyclic factor = 8 dim = 1 // Keep original factor 8 for i1 unroll
-#pragma HLS ARRAY_PARTITION variable = output_buffer_kernel cyclic factor = 16 dim = 2
-#pragma HLS ARRAY_PARTITION variable = output_buffer_kernel cyclic factor = 16 dim = 3
+#pragma HLS ARRAY_PARTITION variable = weight cyclic factor = 1 dim = 1
+#pragma HLS ARRAY_PARTITION variable = weight cyclic factor = 16 dim = 2
+#pragma HLS ARRAY_PARTITION variable = weight complete dim = 3
+#pragma HLS ARRAY_PARTITION variable = weight complete dim = 4
 
-#pragma HLS ARRAY_PARTITION variable = weight_buffer_kernel cyclic factor = 8 dim = 1 // Keep original factor 8 for i1 unroll
-#pragma HLS ARRAY_PARTITION variable = weight_buffer_kernel cyclic factor = 16 dim = 2
-#pragma HLS ARRAY_PARTITION variable = weight_buffer_kernel complete dim = 3
-#pragma HLS ARRAY_PARTITION variable = weight_buffer_kernel complete dim = 4
-
-    cnn(input_buffer_kernel, output_buffer_kernel, weight_buffer_kernel, vinput, vweight, voutput);
+  /**
+   * Call the main CNN function that performs the actual computation.
+   * It reads from local buffers, performs convolution, and writes back to local
+   * output.
+   */
+  cnn(input, output, weight, vinput, vweight, voutput);
 }
