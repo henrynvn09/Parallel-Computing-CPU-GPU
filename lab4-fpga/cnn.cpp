@@ -395,7 +395,7 @@ void kernel_cnn(float4 vinput[3326976], float1 vweight[1638400],
 #pragma HLS ARRAY_PARTITION variable = output cyclic factor = 32 dim = 3
 
 #pragma HLS ARRAY_PARTITION variable = weight cyclic factor = 1 dim = 1
-#pragma HLS ARRAY_PARTITION variable = weight cyclic factor = 1 dim = 2
+#pragma HLS ARRAY_PARTITION variable = weight cyclic factor = 32 dim = 2
 #pragma HLS ARRAY_PARTITION variable = weight complete dim = 3
 #pragma HLS ARRAY_PARTITION variable = weight complete dim = 4
 
