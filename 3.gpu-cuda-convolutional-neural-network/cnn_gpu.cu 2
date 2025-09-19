@@ -1,0 +1,177 @@
+// Header inclusions, if any...
+#include "lib/cnn.cuh"
+#include "cnn_gpu.cuh"
+#include <cfloat> // For FLT_MAX
+#include <math.h> // For fmaxf
+
+// CNN Parameters based on the problem description
+// Input: 256 channels, 228 height, 228 width
+// Convolution Filter: 5x5, 256 input channels, 256 output channels, stride 1, no padding
+// ReLU
+// Max Pooling: 2x2, stride 2
+// Output: 256 channels, 112 height, 112 width
+
+// Using static const int for compile-time constants within this file
+static const int kNumChannels = 256;
+static const int kInputHeight = 228;
+static const int kInputWidth = 228;
+static const int kKernelSize = 5;
+static const int kPoolSize = 2; // 2x2 pooling
+static const int kPoolStride = 2;
+
+// Derived dimensions
+// Convolution output dimensions (before pooling)
+static const int kConvOutputHeight = kInputHeight - kKernelSize + 1; // 228 - 5 + 1 = 224
+static const int kConvOutputWidth = kInputWidth - kKernelSize + 1;   // 228 - 5 + 1 = 224
+
+// Final output dimensions (after pooling)
+static const int kFinalOutputHeight = kConvOutputHeight / kPoolStride; // 224 / 2 = 112
+static const int kFinalOutputWidth = kConvOutputWidth / kPoolStride;   // 224 / 2 = 112
+
+// --- Block dimensions (Hard-coded for optimal static performance) ---
+#define BLOCK_DIM_X 16
+#define BLOCK_DIM_Y 8
+// BLOCK_DIM_Z is implicitly blockDim.z
+
+// --- Shared Memory Tile Dimensions (Derived from hard-coded block dimensions) ---
+// Size of the input tile that needs to be loaded into shared memory for one block
+// Max local coordinate in shared memory before adding kernel offset:
+// (BLOCK_DIM_Y - 1) * kPoolStride + (kPoolSize - 1)
+// Add (kKernelSize - 1) for kernel extent. Total size is this + 1.
+#define SHARED_MEM_TILE_HEIGHT ((BLOCK_DIM_Y - 1) * kPoolStride + kPoolSize + kKernelSize - 1)
+#define SHARED_MEM_TILE_WIDTH  ((BLOCK_DIM_X - 1) * kPoolStride + kPoolSize + kKernelSize - 1)
+
+// Helper for 4D weight indexing: weight[out_channel][in_channel][kernel_row][kernel_col]
+__device__ inline int weight_idx(int out_ch, int in_ch, int kr, int kc) {
+    return out_ch * (kNumChannels * kKernelSize * kKernelSize) +
+           in_ch * (kKernelSize * kKernelSize) +
+           kr * kKernelSize +
+           kc;
+}
+
+// Helper for 3D input/feature map indexing: map[channel][row][col]
+__device__ inline int feature_map_idx(int ch, int r, int c, int height, int width) {
+    return ch * (height * width) +
+           r * width +
+           c;
+}
+
+__global__ void cnn_gpu(
+    const float* __restrict__ input,   // Input: kNumChannels x kInputHeight x kInputWidth
+    const float* __restrict__ weight,  // Weights: kNumChannels x kNumChannels x kKernelSize x kKernelSize
+    const float* __restrict__ bias,    // Bias: kNumChannels
+    float* __restrict__ output) {      // Output: kNumChannels x kFinalOutputHeight x kFinalOutputWidth
+
+    // Static shared memory for optimal performance with fixed block dimensions
+    __shared__ float s_input[SHARED_MEM_TILE_HEIGHT][SHARED_MEM_TILE_WIDTH];
+
+    // Thread indices for the final output feature map
+    const int final_w_idx = blockIdx.x * BLOCK_DIM_X + threadIdx.x; // Using macro
+    const int final_h_idx = blockIdx.y * BLOCK_DIM_Y + threadIdx.y; // Using macro
+    const int channel_idx = blockIdx.z * blockDim.z + threadIdx.z;
+
+    // Boundary check: ensure thread is within the output dimensions
+    if (channel_idx >= kNumChannels || final_h_idx >= kFinalOutputHeight || final_w_idx >= kFinalOutputWidth) {
+        return;
+    }
+
+    // Accumulators for the convolution result for each of the 2x2 pooling locations
+    // These will be stored in registers for each thread.
+    float conv_sum_00;
+    float conv_sum_01;
+    float conv_sum_10;
+    float conv_sum_11;
+
+    conv_sum_00 = bias[channel_idx];
+    conv_sum_01 = bias[channel_idx];
+    conv_sum_10 = bias[channel_idx];
+    conv_sum_11 = bias[channel_idx];
+    
+    int input_global_base_h = blockIdx.y * BLOCK_DIM_Y * kPoolStride;
+    int input_global_base_w = blockIdx.x * BLOCK_DIM_X * kPoolStride;
+
+    // Iterate over input channels
+    for (int in_c = 0; in_c < kNumChannels; ++in_c) {
+        // --- Cooperative loading of input tile into shared memory ---
+        // Each thread in the XY plane of the block loads multiple elements
+        int num_threads_loading_2d = BLOCK_DIM_X * BLOCK_DIM_Y; // Using macros
+        int elements_to_load = SHARED_MEM_TILE_HEIGHT * SHARED_MEM_TILE_WIDTH; // Using macros
+        int loads_per_thread = (elements_to_load + num_threads_loading_2d - 1) / num_threads_loading_2d;
+
+        for (int i = 0; i < loads_per_thread; ++i) {
+            int flat_s_mem_idx = (threadIdx.y * BLOCK_DIM_X + threadIdx.x) + i * num_threads_loading_2d; // Using macro for BLOCK_DIM_X part
+            if (flat_s_mem_idx < elements_to_load) {
+                int s_h = flat_s_mem_idx / SHARED_MEM_TILE_WIDTH; // Using macro
+                int s_w = flat_s_mem_idx % SHARED_MEM_TILE_WIDTH; // Using macro
+                
+                int g_h = input_global_base_h + s_h;
+                int g_w = input_global_base_w + s_w;
+
+                if (g_h < kInputHeight && g_w < kInputWidth) {
+                    s_input[s_h][s_w] = input[feature_map_idx(in_c, g_h, g_w, kInputHeight, kInputWidth)];
+                } else {
+                    s_input[s_h][s_w] = 0.0f;
+                }
+            }
+        }
+        __syncthreads();
+
+        // --- Convolution using shared memory ---
+        // Unrolled version for kPoolSize = 2
+        int local_conv_h_0, local_conv_h_1;
+        int local_conv_w_0, local_conv_w_1;
+
+        local_conv_h_0 = threadIdx.y * kPoolStride + 0;
+        local_conv_w_0 = threadIdx.x * kPoolStride + 0;
+        for (int kh = 0; kh < kKernelSize; ++kh) {
+            for (int kw = 0; kw < kKernelSize; ++kw) {
+                conv_sum_00 += weight[weight_idx(channel_idx, in_c, kh, kw)] *
+                               s_input[local_conv_h_0 + kh][local_conv_w_0 + kw];
+            }
+        }
+
+        local_conv_w_1 = threadIdx.x * kPoolStride + 1;
+        for (int kh = 0; kh < kKernelSize; ++kh) {
+            for (int kw = 0; kw < kKernelSize; ++kw) {
+                conv_sum_01 += weight[weight_idx(channel_idx, in_c, kh, kw)] *
+                               s_input[local_conv_h_0 + kh][local_conv_w_1 + kw];
+            }
+        }
+        
+        local_conv_h_1 = threadIdx.y * kPoolStride + 1;
+        for (int kh = 0; kh < kKernelSize; ++kh) {
+            for (int kw = 0; kw < kKernelSize; ++kw) {
+                conv_sum_10 += weight[weight_idx(channel_idx, in_c, kh, kw)] *
+                               s_input[local_conv_h_1 + kh][local_conv_w_0 + kw];
+            }
+        }
+
+        for (int kh = 0; kh < kKernelSize; ++kh) {
+            for (int kw = 0; kw < kKernelSize; ++kw) {
+                conv_sum_11 += weight[weight_idx(channel_idx, in_c, kh, kw)] *
+                               s_input[local_conv_h_1 + kh][local_conv_w_1 + kw];
+            }
+        }
+
+        __syncthreads(); // Sync to ensure all reads from s_input are done before it might be overwritten by the next in_c load
+    }
+
+    // --- ReLU and Max Pooling (after all input channels are processed) ---
+    float max_pool_val = -FLT_MAX;
+    float relu_val;
+
+    relu_val = fmaxf(0.f, conv_sum_00);
+    max_pool_val = fmaxf(max_pool_val, relu_val);
+
+    relu_val = fmaxf(0.f, conv_sum_01);
+    max_pool_val = fmaxf(max_pool_val, relu_val);
+
+    relu_val = fmaxf(0.f, conv_sum_10);
+    max_pool_val = fmaxf(max_pool_val, relu_val);
+
+    relu_val = fmaxf(0.f, conv_sum_11);
+    max_pool_val = fmaxf(max_pool_val, relu_val);
+
+    // Write the final result to global memory
+    output[feature_map_idx(channel_idx, final_h_idx, final_w_idx, kFinalOutputHeight, kFinalOutputWidth)] = max_pool_val;
+}
