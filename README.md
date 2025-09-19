@@ -7,11 +7,11 @@ Making software 10x-1000x faster through parallel programming and hardware optim
 Hands-on experience with parallel programming across the full computing stack—from multi-core CPUs to distributed systems, GPUs, and custom hardware.
 
 
-| Technology | Use Case | Typical Speedup | Business Application |
+| Technology | Use Case | Typical Speedup | Application |
 |------------|----------|----------------|----------------------|
 | Multi-core CPUs | Optimize existing applications | 4-16x | Backend services, APIs, batch processing |
 | Distributed Computing | Scale beyond single machines | Linear with nodes | Big data, cloud workloads, enterprise analytics |
-| GPU Acceleration | Massively parallel workloads (CNNs, ML) | 1000x optimized GPU vs baseline | AI/ML inference, computer vision, scientific computing |
+| **GPU NVIDIA Acceleration** | Massively parallel workloads (CNNs, ML) | **1000x** optimized GPU vs baseline | AI/ML inference, computer vision, scientific computing |
 | Custom Hardware | Ultra-low latency applications | 10-100x lower latency | Trading systems, real-time processing |
 
 ## Business Impact & ROI
